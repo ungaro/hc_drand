@@ -1,0 +1,19 @@
+{
+    "extends": "./node_modules/gts/tsconfig-google.json",
+    "compilerOptions": {
+        "rootDir": "./src",
+        "outDir": "./dist",
+      "strict": true,
+      "target": "ES2020",                               
+      "module": "esnext",
+      "moduleResolution": "node",
+      //"noEmit": true,
+      //"allowImportingTsExtensions": true,
+      "sourceMap": true,
+      "esModuleInterop": true,
+      "resolveJsonModule": true,
+      "skipLibCheck": true,
+    },
+    "include": ["src/**/*.ts", "tests/**/*.ts"],
+    "exclude": ["node_modules", "**/*.spec.ts"]
+  }
