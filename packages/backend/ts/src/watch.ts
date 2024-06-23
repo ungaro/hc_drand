@@ -25,7 +25,7 @@ import {
   keccak256,
   bytesToHex,
 } from "viem";
-import { anvil } from "viem/chains";
+import { anvil, sepolia } from "viem/chains";
 import { privateKeyToAccount, nonceManager } from 'viem/accounts'
 import { randomBytes } from "crypto";
 
@@ -68,13 +68,13 @@ const account = privateKeyToAccount(
 
 // CREATE CLIENTS
 const publicClient = createPublicClient({
-  chain: anvil,
+  chain: sepolia,
   transport: http(process.env.RPC_URL),
 });
 
 const walletClient = createWalletClient({
   account,
-  chain: anvil,
+  chain: sepolia,
   transport: http(process.env.RPC_URL),
 });
 
@@ -134,6 +134,7 @@ const postDrandValue = async (timestamp: number, drandValue: string, nonce: numb
 // Function to post commitments
 const postCommitment = async (timestamp: number, commitment: string, nonce: number) => {
     try {
+      console.log("postCommitment___",timestamp,commitment);
     const result = await walletClient.sendTransaction({
       to: sequencerRandomOracleAddress,
       abi: sequencerRandomOracleAbi,
@@ -142,7 +143,6 @@ const postCommitment = async (timestamp: number, commitment: string, nonce: numb
       gas: 500000n,
 //      nonce
     });
-    //console.log(`Posted commitment for ${timestamp}:`, result);
     logger.info(`Posted commitment for ${timestamp}:`, { message: result });
   } catch (error) {
     logger.error("Error posting commitment:", error);
@@ -151,6 +151,7 @@ const postCommitment = async (timestamp: number, commitment: string, nonce: numb
 
 // Function to reveal values
 const revealValue = async (timestamp: number, value: string, nonce: number) => {
+  console.log("revealValue",timestamp,value);
     try {
     const result = await walletClient.sendTransaction({
       to: sequencerRandomOracleAddress,
@@ -160,6 +161,7 @@ const revealValue = async (timestamp: number, value: string, nonce: number) => {
       gas: 500000n,
       //nonce
     });
+    console.log("revealValue result",result);
 
     logger.info(chalk.white(`Revealed value for ${timestamp}:`, result));
   } catch (error) {
@@ -217,7 +219,9 @@ const generateAndPostCommitments = async () => {
 
 */
 
-  const generateAndPostCommitments = async () => {
+const generateAndPostCommitments = async (blockTimestamp: number) => {
+/*
+//  const generateAndPostCommitments = async () => {
     setInterval(async () => {
       const block = await publicClient.getBlock();
       const timestamp = Number(block.timestamp) + SEQUENCER_COMMIT_DELAY;
@@ -225,8 +229,12 @@ const generateAndPostCommitments = async () => {
       const commitment = keccak256(randomValue);
   
       // Get the current nonce
-      const nonce = await walletClient.getTransactionCount(account.address);
   
+      const nonce = await publicClient.getTransactionCount({  
+        address: account.address  as `0x${string}`
+      })
+
+
       logger.info(`Generated commitment for ${timestamp}:`, { message: commitment });
       logger.info(`Generated random value for ${timestamp}:`, { message: randomValue });
   
@@ -235,9 +243,31 @@ const generateAndPostCommitments = async () => {
   
       // Reveal the value after a delay (for example, 10 seconds)
       setTimeout(async () => {
-        await revealValue(timestamp, randomValue, nonce + 1n);
+        await revealValue(timestamp, randomValue, nonce + 1);
       }, SEQUENCER_COMMIT_DELAY * 1000);
     }, 2000);
+
+*/
+    const timestamp = blockTimestamp + SEQUENCER_COMMIT_DELAY;
+    const randomValue = bytesToHex(randomBytes(32));
+    const commitment = keccak256(randomValue);
+  
+    // Get the current nonce
+    const nonce = await publicClient.getTransactionCount({
+      address: account.address as `0x${string}`
+    });
+  
+    logger.info(`Generated commitment for ${timestamp}:`, { message: commitment });
+    logger.info(`Generated random value for ${timestamp}:`, { message: randomValue });
+  
+    // Post the commitment
+    await postCommitment(timestamp, commitment, nonce);
+  
+    // Reveal the value after a delay (for example, 10 seconds)
+    setTimeout(async () => {
+      await revealValue(timestamp, randomValue, nonce + 1);
+    }, SEQUENCER_COMMIT_DELAY * 1000);
+
   };
 
 
@@ -245,13 +275,19 @@ const generateAndPostCommitments = async () => {
 
 // Function to retrieve randomness
 const getRandomness = async (timestamp: number): Promise<void> => {
+  console.log("GETRANDOMNESS_CALLED");
+  console.log("timesgamp",timestamp);
   try {
+    console.log("GETRANDOMNESS_CALLED1");
+
     const randomness = await publicClient.readContract({
       address: randomnessOracleAddress,
       abi: randomnessOracleAbi,
-      functionName: "unsafeGetRandomness",
+      functionName: "getRandomness",
       args: [timestamp],
     });
+    console.log("GETRANDOMNESS_CALLED2");
+
     logger.info(`Randomness for  ${timestamp}:`, { message: randomness });
   } catch (error) {
     console.error("Error getting randomness value:", error);
@@ -277,7 +313,7 @@ const runService = async () => {
   }, 3000);
 
   // Generate and post commitments
-  generateAndPostCommitments();
+ // generateAndPostCommitments();
 
   const unwatch = publicClient.watchBlocks({
     emitMissed: true, 
@@ -287,8 +323,11 @@ const runService = async () => {
       );
       logger.info("BLOCK NUMBER", { message: block.number });
       logger.info("BLOCK TIMESTAMP", { message: block.timestamp });
+      logger.info("WHYYYYY");
       await getRandomness(Number(block.timestamp));
+      await generateAndPostCommitments(Number(block.timestamp));
     },
+    onError: error => {console.log("WATCHBLOCKS_ERROR",error) },
   });
 };
 
