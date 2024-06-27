@@ -10,7 +10,10 @@ import {
   bytesToHex,
   parseAbi,
   TransactionExecutionError,
+  type GetBlockNumberErrorType 
 } from "viem";
+import { BaseError, ContractFunctionRevertedError } from "viem";
+
 import { anvil } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
 import { randomBytes } from "crypto";
@@ -77,7 +80,7 @@ interface DrandResponse {
 }
 
 interface PendingTransaction {
-  type: "drand" | "sequencerCommitment" | "sequencerReveal";
+  type: "drand" | "commitment" | "reveal";
   hash: `0x${string}`;
   timestamp: number;
   nonce: number;
@@ -93,25 +96,29 @@ interface QueuedTransaction {
 
 // Clients setup
 const account = privateKeyToAccount(
-  "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+  "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
   //{ nonceManager }
 );
-
 
 // we're going to use websockets because we want to be fast, we can failover to http if websocket is not available.
 const publicClient = createPublicClient({
   chain: anvil,
   //transport: http(process.env.RPC_URL),
-  transport: webSocket(process.env.RPC_URL),
+  transport: webSocket(process.env.RPC_URL, {
+    reconnect: true,
+    retryCount: 100,
+  }),
 });
 
 // we're going to use websockets because we want to be fast, we can failover to http if websocket is not available.
 const walletClient = createWalletClient({
   account,
   chain: anvil,
-//  transport: http(process.env.RPC_URL),
-  transport: webSocket(process.env.RPC_URL),
-
+  //  transport: http(process.env.RPC_URL),
+  transport: webSocket(process.env.RPC_URL, {
+    reconnect: true,
+    retryCount: 100,
+  }),
 });
 
 // Transaction queue
@@ -120,14 +127,16 @@ let transactionQueue: QueuedTransaction[] = [];
 // Pending tx queue
 const pendingTransactions: PendingTransaction[] = [];
 
-
 const sequencerRandomnessCache = new Map<number, string>();
 const processedDrandTimestamps = new Set<number>();
 
 const MAX_TRANSACTION_TIME = 60000; // 60 seconds
 const GAS_PRICE_BUMP_PERCENTAGE = 10; // 10% increase
 
-const nonceManager = createNonceManager({ client: publicClient, address: account.address});
+const nonceManager = createNonceManager({
+  client: publicClient,
+  address: account.address,
+});
 
 const calculateDrandRound = (timestamp: number): number => {
   return Math.floor((timestamp - DRAND_GENESIS_TIMESTAMP) / DRAND_INTERVAL);
@@ -159,8 +168,9 @@ const addToTransactionQueue = (transaction: QueuedTransaction) => {
 
 const processTransactionQueue = async () => {
   if (transactionQueue.length === 0) return;
-
   const transaction = transactionQueue[0];
+  console.log("TX_TYPE", transaction.type);
+
   try {
     switch (transaction.type) {
       case "drand":
@@ -202,39 +212,54 @@ const processTransactionQueue = async () => {
 };
 
 const submitTransaction = async (
-  type: PendingTransaction['type'],
+  type: PendingTransaction["type"],
   timestamp: number,
   contractCall: () => Promise<`0x${string}`>,
   additionalData?: any
 ): Promise<void> => {
   try {
-    await nonceManager.resetNonce();
+    //await nonceManager.resetNonce();
     const nonce = nonceManager.nextNonce();
     const txHash = await contractCall();
-    
+
     pendingTransactions.push({
       type,
       hash: txHash,
       timestamp,
       nonce,
       submittedAt: Date.now(),
-      data: additionalData
+      data: additionalData,
     });
 
-    logger.info(`Submitted ${type} transaction for timestamp ${timestamp}. Hash: ${txHash}`);
+    // Useful for debugging
+    logger.info(
+      `Submitted ${type} transaction for timestamp ${timestamp}. Hash: ${txHash}`
+    );
   } catch (error) {
     if (nonceManager.shouldResetNonce(error)) {
       await nonceManager.resetNonce();
       //logger.warn(`Nonce reset due to error: ${error}`);
+
       logger.error(`Nonce reset due to error.`);
       // Retry the transaction
       await submitTransaction(type, timestamp, contractCall, additionalData);
     } else {
-      logger.error(`Error submitting ${type} transaction: ${error}`);
+      if (error instanceof BaseError) {
+        const revertError = error.walk(
+          (err) => err instanceof ContractFunctionRevertedError
+        );
+        if (revertError instanceof ContractFunctionRevertedError) {
+          const errorName = revertError.data?.errorName ?? "";
+          logger.error(
+            `Contract revert error: ${errorName}, args: ${revertError.data?.args}`
+          );
+        }
+      }
+
+      //logger.error(`Error submitting ${type} transaction: ${error}`);
     }
   }
 };
-
 
 const isDrandAvailable = async (timestamp: number): Promise<boolean> => {
   try {
@@ -259,134 +284,93 @@ const postDrandValue = async (
   drandValue: string
 ): Promise<void> => {
   if (processedDrandTimestamps.has(timestamp)) {
-    logger.info(`Drand value for ${timestamp} has already been processed, skipping.`);
+    //this creates too much log, maybe add only to file log.
+    //logger.info(`Drand value for ${timestamp} has already been processed, skipping.`);
     return;
   }
 
   const drandValueBytes32 = hexToBytes32(drandValue);
-  await submitTransaction('drand', timestamp, async () => {
-    const tx = await walletClient.writeContract({
-      account,
-      address: drandOracleAddress,
-      abi: drandOracleAbi,
-      functionName: "updateDrandValue",
-      args: [BigInt(timestamp), drandValueBytes32],
-      maxFeePerGas: await publicClient.estimateMaxPriorityFeePerGas(),
-    });
-    return tx;
-  }, { drandValue });
+  await submitTransaction(
+    "drand",
+    timestamp,
+    async () => {
+      const tx = await walletClient.writeContract({
+        account,
+        address: drandOracleAddress,
+        abi: drandOracleAbi,
+        functionName: "setDrand",
+        args: [BigInt(timestamp), drandValueBytes32],
+        maxFeePerGas: await publicClient.estimateMaxPriorityFeePerGas(),
+      });
+      return tx;
+    },
+    { drandValue }
+  );
 
   processedDrandTimestamps.add(timestamp);
 };
-/*
 
-const postDrandValue = async (
-  timestamp: number,
-  drandValue: string
-): Promise<void> => {
-  if (processedDrandTimestamps.has(timestamp)) {
-    logger.info(
-      `Drand value for ${timestamp} has already been processed, skipping.`
-    );
-    return;
-  }
-
-  try {
-
-    const isAvailable = await isDrandAvailable(timestamp);
-    if (isAvailable) {
-      logger.info(
-        `Drand value for ${timestamp} is already available, skipping.`
-      );
-      processedDrandTimestamps.add(timestamp);
-      return;
-    }
-
-    const drandValueBytes32 = hexToBytes32(drandValue);
-    const tx = await walletClient.writeContract({
-      account: account,
-      address: drandOracleAddress,
-      abi: drandOracleAbi,
-      functionName: "updateDrandValue",
-      args: [BigInt(timestamp), drandValueBytes32],
-      maxFeePerGas: await publicClient.estimateMaxPriorityFeePerGas(),
-    });
-    logger.info(`Posted Drand value for ${timestamp}: ${drandValue}`);
-
-    // Add to processedDrandTimestamps immediately
-    processedDrandTimestamps.add(timestamp);
-
-    // Add to pending transactions queue
-    pendingTransactions.push({ hash: tx, timestamp, type: "drand" });
-  } catch (error) {
-    if (error instanceof TransactionExecutionError) {
-      if (
-        error.message.includes("Drand value already set") ||
-        error.message.includes("Drand value expired")
-      ) {
-        logger.warn(`Drand value for ${timestamp} was already set or expired.`);
-        processedDrandTimestamps.add(timestamp);
-      } else {
-        logger.error(
-          `Error posting Drand value for ${timestamp}: ${error.message}`
-        );
-      }
-    } else {
-      logger.error(`Error posting Drand value for ${timestamp}: ${error}`);
-    }
-  }
-};
-*/
 const processPendingTransactions = async () => {
   const currentTime = Date.now();
-  
+
   for (let i = 0; i < pendingTransactions.length; i++) {
     const tx = pendingTransactions[i];
-    
+
     try {
       const receipt = await publicClient.waitForTransactionReceipt({
         hash: tx.hash,
-        timeout: 1000, // Short timeout to quickly check status
+        timeout: 5000, // Short timeout to quickly check status
       });
-      
+
+      //useful debug info
       logger.info(`Transaction ${tx.hash} for ${tx.type} at ${tx.timestamp} confirmed`);
       pendingTransactions.splice(i, 1);
       i--;
     } catch (error) {
       if (currentTime - tx.submittedAt > MAX_TRANSACTION_TIME) {
-        logger.warn(`Transaction ${tx.hash} for ${tx.type} at ${tx.timestamp} is taking too long. Attempting replacement.`);
-        
+        logger.warn(
+          `Transaction ${tx.hash} for ${tx.type} at ${tx.timestamp} is taking too long. Attempting replacement.`
+        );
+
         try {
           const newGasPrice = await bumpGasPrice(tx.hash);
           const newTxHash = await replaceTransaction(tx, newGasPrice);
-          
+
           logger.info(`Replaced transaction ${tx.hash} with ${newTxHash}`);
-          pendingTransactions[i] = { ...tx, hash: newTxHash, submittedAt: currentTime };
+          pendingTransactions[i] = {
+            ...tx,
+            hash: newTxHash,
+            submittedAt: currentTime,
+          };
         } catch (replaceError) {
-          logger.error(`Failed to replace transaction ${tx.hash}: ${replaceError}`);
+          logger.error(
+            `Failed to replace transaction ${tx.hash}: ${replaceError}`
+          );
         }
       }
     }
   }
 };
 
-
 // Function to replace a transaction
-const replaceTransaction = async (tx: PendingTransaction, newGasPrice: bigint): Promise<`0x${string}`> => {
+const replaceTransaction = async (
+  tx: PendingTransaction,
+  newGasPrice: bigint
+): Promise<`0x${string}`> => {
   switch (tx.type) {
-    case 'drand':
+    case "drand":
       const drandValueBytes32 = hexToBytes32(tx.data.drandValue);
       return await walletClient.writeContract({
         account,
         address: drandOracleAddress,
         abi: drandOracleAbi,
-        functionName: "updateDrandValue",
+        functionName: "setDrand",
         args: [BigInt(tx.timestamp), drandValueBytes32],
         maxFeePerGas: newGasPrice,
         nonce: tx.nonce,
       });
 
-    case 'sequencerCommitment':
+    case "commitment":
       return await walletClient.writeContract({
         address: sequencerRandomOracleAddress,
         abi: sequencerRandomOracleAbi,
@@ -396,32 +380,34 @@ const replaceTransaction = async (tx: PendingTransaction, newGasPrice: bigint): 
         nonce: tx.nonce,
       });
 
-    case 'sequencerReveal':
+    case "reveal":
       return await walletClient.writeContract({
         address: sequencerRandomOracleAddress,
         abi: sequencerRandomOracleAbi,
-        functionName: "revealValue",
+        functionName: "reveal",
         args: [BigInt(tx.timestamp), tx.data.randomValue as `0x${string}`],
         maxFeePerGas: newGasPrice,
         nonce: tx.nonce,
       });
 
     default:
-      throw new Error(`Unsupported transaction type for replacement: ${tx.type}`);
+      throw new Error(
+        `Unsupported transaction type for replacement: ${tx.type}`
+      );
   }
 };
-
 
 // Function to bump gas price
 const bumpGasPrice = async (txHash: `0x${string}`): Promise<bigint> => {
   const tx = await publicClient.getTransaction({ hash: txHash });
   const currentGasPrice = tx.maxFeePerGas || tx.gasPrice;
-  if (!currentGasPrice) throw new Error("Unable to determine current gas price");
-  
-  const bumpAmount = (currentGasPrice * BigInt(GAS_PRICE_BUMP_PERCENTAGE)) / BigInt(100);
+  if (!currentGasPrice)
+    throw new Error("Unable to determine current gas price");
+
+  const bumpAmount =
+    (currentGasPrice * BigInt(GAS_PRICE_BUMP_PERCENTAGE)) / BigInt(100);
   return currentGasPrice + bumpAmount;
 };
-
 
 const cleanupProcessedDrandTimestamps = () => {
   const currentTimestamp = Math.floor(Date.now() / 1000);
@@ -438,32 +424,45 @@ const postCommitment = async (
   timestamp: number,
   commitment: string
 ): Promise<void> => {
-  await submitTransaction('sequencerCommitment', timestamp, async () => {
-    const tx = await walletClient.writeContract({
-      address: sequencerRandomOracleAddress,
-      abi: sequencerRandomOracleAbi,
-      functionName: "postCommitment",
-      args: [BigInt(timestamp), commitment as `0x${string}`],
-      maxFeePerGas: await publicClient.estimateMaxPriorityFeePerGas(),
-    });
-    return tx;
-  }, { commitment });
+  await submitTransaction(
+    "commitment",
+    timestamp,
+    async () => {
+      const tx = await walletClient.writeContract({
+        address: sequencerRandomOracleAddress,
+        abi: sequencerRandomOracleAbi,
+        functionName: "postCommitment",
+        args: [BigInt(timestamp), commitment as `0x${string}`],
+        maxFeePerGas: await publicClient.estimateMaxPriorityFeePerGas(),
+      });
+      return tx;
+    },
+    { commitment }
+  );
 
   logger.info(`Posted commitment for ${timestamp}: ${commitment}`);
 };
 
-
 const revealValue = async (timestamp: number, value: string): Promise<void> => {
   try {
-    const tx = await walletClient.writeContract({
-      address: sequencerRandomOracleAddress,
-      abi: sequencerRandomOracleAbi,
-      functionName: "revealValue",
-      args: [BigInt(timestamp), value as `0x${string}`],
-      maxFeePerGas: await publicClient.estimateMaxPriorityFeePerGas(),
-    });
+    await submitTransaction(
+      "reveal",
+      timestamp,
+      async () => {
+        const tx = await walletClient.writeContract({
+          address: sequencerRandomOracleAddress,
+          abi: sequencerRandomOracleAbi,
+          functionName: "reveal",
+          args: [BigInt(timestamp), value as `0x${string}`],
+          maxFeePerGas: await publicClient.estimateMaxPriorityFeePerGas(),
+        });
+        return tx;
+      },
+      { value }
+    );
+
     logger.info(`Revealed value for ${timestamp}: ${value}`);
- //   await publicClient.waitForTransactionReceipt({ hash: tx });
+    //   await publicClient.waitForTransactionReceipt({ hash: tx });
   } catch (error) {
     logger.error(`Error revealing value for ${timestamp}: ${error}`);
     throw error;
@@ -477,9 +476,8 @@ const generateAndPostCommitments = async (
   const randomValue = bytesToHex(randomBytes(32));
   const commitment = keccak256(randomValue as `0x${string}`);
 
-  logger.info(`Generated commitment for ${commitmentTimestamp}: ${commitment}`);
   logger.info(
-    `Generated random value for ${commitmentTimestamp}: ${randomValue}`
+    `Generated commitment and random value for ${commitmentTimestamp}: ${commitment} / ${randomValue}`
   );
 
   sequencerRandomnessCache.set(commitmentTimestamp, randomValue);
@@ -494,10 +492,10 @@ const generateAndPostCommitments = async (
 };
 
 const backfillSequencerValues = async (currentTimestamp: number) => {
-  console.log("backfillSequencerValues___", currentTimestamp);
+  //console.log("backfillSequencerValues___", currentTimestamp);
   for (
     let t = currentTimestamp;
-    t <= currentTimestamp + SEQUENCER_COMMIT_DELAY-1;
+    t <= currentTimestamp + SEQUENCER_PRECOMMIT_DELAY + BLOCK_TIME;
     t += 2
   ) {
     if (!sequencerRandomnessCache.has(t)) {
@@ -534,10 +532,12 @@ const revealSequencerValue = async (timestamp: number) => {
   }
 
   try {
+    console.log("REVEALING", timestamp, randomValue);
     await walletClient.writeContract({
       address: sequencerRandomOracleAddress,
       abi: sequencerRandomOracleAbi,
-      functionName: "revealValue",
+      functionName: "reveal",
+      nonce: nonceManager.nextNonce(),
       args: [BigInt(timestamp), randomValue as `0x${string}`],
       maxFeePerGas: await publicClient.estimateMaxPriorityFeePerGas(),
     });
@@ -557,7 +557,9 @@ const getRandomness = async (timestamp: number): Promise<void> => {
     });
 
     //    chalk.magenta(`Randomness for ${timestamp}: ${randomness}`)
-    logger.info(chalk.magenta(`Got Randomness for ${timestamp}: ${randomness}`));
+    logger.info(
+      chalk.magenta(`Got Randomness for ${timestamp}: ${randomness}`)
+    );
 
     logger.info(`Randomness for ${timestamp}: ${randomness}`);
 
@@ -570,14 +572,34 @@ const getRandomness = async (timestamp: number): Promise<void> => {
     logger.info(
       `Randomness will be available for ${timestamp}: ${willBeAvailable}`
     );
-  } catch (error) {
-    logger.error(`Error getting randomness value for ${timestamp}: ${error}`);
+  } catch (err) {
+    if (err instanceof BaseError) {
+      const revertError = err.walk(
+        (err) => err instanceof ContractFunctionRevertedError
+      );
+      if (revertError instanceof ContractFunctionRevertedError) {
+        const errorName = revertError.data?.errorName ?? "";
+        const revertReason = revertError.data?.args ?? "";
+        // do something with `errorName`
+        //console.log("ERRORNAME",revertReason);
+        //console.log("ERRORNAME",revertReason[0]);
+        logger.error(`Error getting randomness value for ${timestamp}`, {
+          message: revertReason[0],
+        });
+      }
+    }
+
+    // logger.error(`Error getting randomness value for ${timestamp}: ${error}`);
   }
 };
 
 const backfillMissingValues = async (): Promise<void> => {
-  console.log("BACKFILLING VALUES");
-  const currentBlock = await publicClient.getBlock({ blockTag: "latest" });
+  //console.log("BACKFILLING VALUES");
+
+  try {
+    const currentBlock = await publicClient.getBlock({ blockTag: "latest" });
+
+
   const currentTimestamp = Number(currentBlock.timestamp);
 
   for (
@@ -586,30 +608,39 @@ const backfillMissingValues = async (): Promise<void> => {
     t <= currentTimestamp;
     t += BLOCK_TIME
   ) {
-    console.log("BACKFILL for TIMESTAMP", t);
+    //why is t same
+    //console.log("BACKFILL for TIMESTAMP", t);
 
     if (processedDrandTimestamps.has(t)) {
-      logger.info(`Drand value for ${t} has already been processed, skipping.`);
+      // creates too much log but useful if you want to debug something
+      //logger.info(`Drand value for ${t} has already been processed, skipping.`);
+
       return;
     } else {
       //const drandAvailable = await isDrandAvailable(t);
 
       //if (!drandAvailable) {
-        const round = calculateDrandRound(t);
-        const drandValue = await fetchDrandValue(round);
-        if (drandValue) {
-          addToTransactionQueue({
-            type: "drand",
-            timestamp: t,
-            value: drandValue,
-            retries: 0,
-          });
-          processedDrandTimestamps.add(t);
-        }
-     // }
+      const round = calculateDrandRound(t);
+      const drandValue = await fetchDrandValue(round);
+      if (drandValue) {
+        addToTransactionQueue({
+          type: "drand",
+          timestamp: t,
+          value: drandValue,
+          retries: 0,
+        });
+        //processedDrandTimestamps.add(t);
+      }
+      // }
     }
   }
 
+} catch (e) {
+    console.log("ERROR",e);
+    const error = e as GetBlockNumberErrorType;
+    console.log("ERROR", error);
+    return;
+  }
 
 };
 
@@ -647,13 +678,8 @@ const postSequencerCommitment = async (timestamp: number) => {
       timestamp,
       nonce: nonceManager.nextNonce(),
       submittedAt: new Date().getTime() / 1000,
-      type: "sequencerCommitment",
+      type: "commitment",
     });
-
-
-
-
-
   } catch (error) {
     logger.error(
       `Error posting sequencer commitment for ${timestamp}: ${error}`
@@ -661,28 +687,86 @@ const postSequencerCommitment = async (timestamp: number) => {
     sequencerRandomnessCache.delete(timestamp);
   }
 };
-
 const revealSequencerRandomness = async (timestamp: number): Promise<void> => {
   const randomValue = sequencerRandomnessCache.get(timestamp);
   if (!randomValue) {
-    logger.warn(`No cached sequencer value available for revealing at timestamp ${timestamp}`);
+    logger.warn(
+      `No cached sequencer value available for revealing at timestamp ${timestamp}`
+    );
     return;
   }
 
-  await submitTransaction('sequencerReveal', timestamp, async () => {
-    const tx = await walletClient.writeContract({
+  try {
+    // Check the last revealed timestamp
+    const lastRevealedT = await publicClient.readContract({
       address: sequencerRandomOracleAddress,
       abi: sequencerRandomOracleAbi,
-      functionName: "revealValue",
-      args: [BigInt(timestamp), randomValue as `0x${string}`],
-      maxFeePerGas: await publicClient.estimateMaxPriorityFeePerGas(),
-    });
-    return tx;
-  }, { randomValue });
+      functionName: "getLastRevealedT",
+    }) as bigint;
+    logger.info(`Last revealed timestamp: ${lastRevealedT}`);
 
-  logger.info(`Revealed sequencer value for ${timestamp}: ${randomValue}`);
+    // Check if commitment exists
+    const commitmentData = await publicClient.readContract({
+      address: sequencerRandomOracleAddress,
+      abi: sequencerRandomOracleAbi,
+      functionName: "getCommitment",
+      args: [BigInt(timestamp)],
+    }) as [string, boolean, bigint];
+
+    const [commitment, revealed, value] = commitmentData;
+    logger.info(`Commitment for ${timestamp}: ${commitment}, revealed: ${revealed}, value: ${value}`);
+
+    // Proceed with reveal
+    await submitTransaction(
+      "reveal",
+      timestamp,
+      async () => {
+        const tx = await walletClient.writeContract({
+          address: sequencerRandomOracleAddress,
+          abi: sequencerRandomOracleAbi,
+          functionName: "reveal",
+          args: [BigInt(timestamp), randomValue as `0x${string}`],
+          maxFeePerGas: await publicClient.estimateMaxPriorityFeePerGas(),
+        });
+        return tx;
+      },
+      { randomValue }
+    );
+
+    logger.info(`Revealed sequencer value for ${timestamp}: ${randomValue}`);
+  } catch (error) {
+    if (error instanceof TransactionExecutionError) {
+      logger.error(`Failed to reveal sequencer value for ${timestamp}: ${error.message}`);
+    } else {
+      logger.error(`Error revealing sequencer value for ${timestamp}: ${error}`);
+    }
+  }
 };
 
+// In your main loop or block processing function
+const processSequencerReveals = async (currentTimestamp: number) => {
+  const lastRevealedT = await publicClient.readContract({
+    address: sequencerRandomOracleAddress,
+    abi: sequencerRandomOracleAbi,
+    functionName: "getLastRevealedT",
+  }) as bigint;
+
+  logger.info(`Current timestamp: ${currentTimestamp}, Last revealed: ${lastRevealedT}`);
+
+  let nextToReveal = Number(lastRevealedT) === 0 ? currentTimestamp - SEQUENCER_TIMEOUT : Number(lastRevealedT) + 2;
+
+  while (nextToReveal <= currentTimestamp - SEQUENCER_TIMEOUT) {
+    await revealSequencerRandomness(nextToReveal);
+    nextToReveal += 2;
+  }
+};
+
+// Call this function in your main loop or block processing function
+
+
+
+
+//useful for debugging, not doing anything
 const monitorTransactions = async () => {
   publicClient.watchPendingTransactions({
     onTransactions: async (hashes) => {
@@ -705,43 +789,36 @@ const monitorTransactions = async () => {
 const runService = async (): Promise<void> => {
   await nonceManager.resetNonce();
 
-// BACKFILL DRAND VALUES
-// Generate Future Commitments
+  // BACKFILL DRAND VALUES
+  // Generate Future Commitments
 
-// wait for some time
+  // wait for some time
 
   setInterval(async () => {
+    try{
     const block = await publicClient.getBlock({ blockTag: "latest" });
 
     const timestamp = Number(block.timestamp);
-    console.log("THE REAL TIMESTAMP", timestamp);
+    //console.log("THE REAL TIMESTAMP", timestamp);
 
-    const drandRound = calculateDrandRound(timestamp-DRAND_DELAY);
+    const drandRound = calculateDrandRound(timestamp - DRAND_DELAY);
     const drandValue = await fetchDrandValue(drandRound);
 
     if (drandValue) {
-      addToTransactionQueue({
-        type: "drand",
-        timestamp: timestamp-DRAND_DELAY,
-        value: drandValue,
-        retries: 0,
-      });
-      addToTransactionQueue({
-        type: "drand",
-        timestamp: timestamp-DRAND_DELAY+1,
-        value: drandValue,
-        retries: 0,
-      });
-      addToTransactionQueue({
-        type: "drand",
-        timestamp: timestamp-DRAND_DELAY+2,
-        value: drandValue,
-        retries: 0,
-      });
+      postDrandValue(timestamp - DRAND_DELAY, drandValue);
+      postDrandValue(timestamp - DRAND_DELAY + BLOCK_TIME, drandValue);
+      postDrandValue(timestamp - DRAND_DELAY + 2 * BLOCK_TIME, drandValue);
     }
-    await processPendingTransactions();
 
+    await processPendingTransactions();
     await backfillMissingValues();
+} catch (e) {
+    console.log("ERROR",e);
+
+    const error = e as GetBlockNumberErrorType;
+    console.log("ERROR", error);
+    return;
+  }
   }, 1000);
 
   publicClient.watchBlocks({
@@ -755,24 +832,17 @@ const runService = async (): Promise<void> => {
       await getRandomness(Number(block.timestamp));
       await generateAndPostCommitments(Number(block.timestamp));
       await backfillSequencerValues(Number(block.timestamp));
+  //    await revealSequencerValue(Number(block.timestamp));
 
+// Call this function in your main loop or block processing function
 
-      /*
-      await postSequencerCommitment(
-        Number(block.timestamp) + SEQUENCER_COMMIT_DELAY
-      );
-      */
-      await revealSequencerValue(Number(block.timestamp));
+  await processSequencerReveals(Number(block.timestamp));
     },
     onError: (error) => logger.error(`Error watching blocks: ${error}`),
   });
 
-  monitorTransactions();
-  setInterval(cleanupProcessedDrandTimestamps, 60000);
+  //monitorTransactions();
+  setInterval(cleanupProcessedDrandTimestamps, 15000);
 };
-
-
-
-
 
 runService().catch((error) => logger.error(`Service error: ${error}`));
