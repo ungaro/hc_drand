@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 contract SequencerRandomOracle {
+    constructor() Ownable(msg.sender) {}
+
     uint256 public constant SEQUENCER_TIMEOUT = 10;
     uint256 public constant PRECOMMIT_DELAY = 10;
 
@@ -18,7 +21,7 @@ contract SequencerRandomOracle {
     event ValueRevealed(uint256 indexed T, uint256 value);
     event RevealError(uint256 indexed T, string reason);
 
-  function unsafeGetSequencerRandom(uint256 T) public view returns (uint256) {
+    function unsafeGetSequencerRandom(uint256 T) public view returns (uint256) {
         Commitment memory commitment = commitments[T];
         if (commitment.revealed) {
             return commitment.value;
@@ -39,10 +42,15 @@ contract SequencerRandomOracle {
         return value;
     }
 
-
-    function postCommitment(uint256 T, bytes32 commitment) public {
-        require(block.timestamp + PRECOMMIT_DELAY <= T, "Commitment must be posted in advance");
-        require(commitments[T].commitment == bytes32(0), "Commitment already posted");
+    function postCommitment(uint256 T, bytes32 commitment) public onlyOwner{
+        require(
+            block.timestamp + PRECOMMIT_DELAY <= T,
+            "Commitment must be posted in advance"
+        );
+        require(
+            commitments[T].commitment == bytes32(0),
+            "Commitment already posted"
+        );
         commitments[T].commitment = commitment;
         emit CommitmentPosted(T, commitment);
     }
@@ -75,7 +83,9 @@ contract SequencerRandomOracle {
         return lastRevealedT;
     }
 
-    function getCommitment(uint256 T) public view returns (bytes32, bool, uint256) {
+    function getCommitment(
+        uint256 T
+    ) public view returns (bytes32, bool, uint256) {
         Commitment memory c = commitments[T];
         return (c.commitment, c.revealed, c.value);
     }
