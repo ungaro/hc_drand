@@ -1,11 +1,13 @@
 {
     "extends": "./node_modules/gts/tsconfig-google.json",
     "compilerOptions": {
+      "lib": ["dom", "ESNext"],
+
         "rootDir": "./src",
         "outDir": "./dist",
       "strict": true,
-      "target": "ES2020",                               
-      "module": "esnext",
+      "module": "ESNext",
+      "target": "ESNext",
       "moduleResolution": "node",
       //"noEmit": true,
       //"allowImportingTsExtensions": true,

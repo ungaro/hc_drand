@@ -180,7 +180,6 @@ const addToTransactionQueue = (transaction: QueuedTransaction) => {
 const processTransactionQueue = async () => {
   if (transactionQueue.length === 0) return;
   const transaction = transactionQueue[0];
-  console.log("TX_TYPE", transaction.type);
 
   try {
     switch (transaction.type) {
@@ -443,9 +442,7 @@ const postCommitment = async (
   timestamp: number,
   commitment: string
 ): Promise<void> => {
-console.log("postcommitment");
-  //if (!sequencerRandomnessCache.has(timestamp)){
-    //console.log("postcommitment2");
+
 
   await submitTransaction(
     "commitment",
@@ -466,7 +463,6 @@ console.log("postcommitment");
 
   logger.info(`Posted commitment for ${timestamp}: ${commitment}`);
 
-//}
 };
 
 
