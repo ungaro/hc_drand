@@ -3,8 +3,9 @@
     "version": "1.0.0",
     "private": true,
     "scripts": {
-      "build:contracts": "cd packages/contracts/drandOracle && forge build",
-      "build:backend": "cd packages/backend/ts && yarn build",
+        "build:contracts": "cd packages/contracts/drandOracle && forge build",
+        "test:contracts": "cd packages/contracts/drandOracle && forge test",
+        "build:backend": "cd packages/backend/ts && yarn build",
       "deploy:backend": "cd packages/backend/ts/ && node dist/deploy.js",
       "start:backend": "cd  packages/backend/ts/ && node dist/main.js",
       "start:anvil": "anvil --block-time 2",

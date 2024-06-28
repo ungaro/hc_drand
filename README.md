@@ -26,4 +26,8 @@ if for some reason you don't see any tx related output in your terminal:
 -  ts/.env file should have all the correct smart contract addresses from previous output.
 -  run "yarn build" && "node ./dist/main.js" from backend/ts folder
     
+## Tests
 
+```
+pnpm test:contracts
+```
