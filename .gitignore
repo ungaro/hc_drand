@@ -1,2 +1,10 @@
 .DS_Store
 **/.DS_Store
+packages/backend/ts/dist/
+**/node_modules/
+**/yarn.lock/
+**/.env
+**/backend.log
+packages/contracts/drandOracle/broadcast/
+packages/contracts/drandOracle/cache/
+packages/contracts/drandOracle/out/
