@@ -7,7 +7,7 @@ const envFilePath = './.env'; // Adjust this if .env is in a different location
 
 // Function to deploy contracts and capture output
 const deployContracts = () => {
-  exec('cd ../../contracts/DrandOracle/ && forge script ./script/Deploy.sol --broadcast', (error: Error | null, stdout: string, stderr: string) => {
+  exec('cd ../../contracts/drandOracle/ && forge script ./script/Deploy.sol --broadcast', (error: Error | null, stdout: string, stderr: string) => {
     if (error) {
       console.error(`Error deploying contracts: ${error.message}`);
       return;

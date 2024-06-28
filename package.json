@@ -1,0 +1,18 @@
+{
+    "name": "DrandOracle",
+    "version": "1.0.0",
+    "private": true,
+    "scripts": {
+      "build:contracts": "cd packages/contracts/drandOracle && forge build",
+      "build:backend": "cd packages/backend/ts && yarn build",
+      "deploy:backend": "cd packages/backend/ts/ && node dist/deploy.js",
+      "start:backend": "cd  packages/backend/ts/ && node dist/main.js",
+      "start:anvil": "anvil --block-time 2",
+      "start": "concurrently \"pnpm run backend:all\" \"pnpm run start:anvil\"",
+      "backend:all": "pnpm run copy:env && pnpm run build:backend && pnpm run deploy:backend && pnpm run start:backend",
+      "copy:env": "cp packages/backend/ts/.env.example packages/backend/ts/.env && cp packages/contracts/drandOracle/.env.example packages/contracts/drandOracle/.env"
+    },
+    "devDependencies": {
+      "concurrently": "^8.0.1"
+    }
+  }
