@@ -8,7 +8,7 @@
 pnpm install
 ```
 
-in a new terminal windows 
+in a new terminal window
 ```
 pnpm start:anvil
 ```

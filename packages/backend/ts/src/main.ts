@@ -11,8 +11,9 @@ import {
   parseAbi,
   TransactionExecutionError,
   type GetBlockNumberErrorType,
+  BaseError,
+  ContractFunctionRevertedError,
 } from "viem";
-import { BaseError, ContractFunctionRevertedError } from "viem";
 
 import { anvil } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
@@ -45,11 +46,15 @@ import randomnessOracleABIJson from "../../../contracts/drandOracle/out/Randomne
 // Constants
 const DRAND_URL = process.env.DRAND_URL || "https://api.drand.sh";
 const DRAND_CHAIN = process.env.DRAND_CHAIN;
-const DRAND_GENESIS_TIMESTAMP = parseInt(process.env.DRAND_GENESIS_TIMESTAMP || "1692803367");
+const DRAND_GENESIS_TIMESTAMP = parseInt(
+  process.env.DRAND_GENESIS_TIMESTAMP || "1692803367"
+);
 const DRAND_INTERVAL = parseInt(process.env.DRAND_INTERVAL || "3");
 const BLOCK_TIME = parseInt(process.env.BLOCK_TIME || "2");
 const DELAY = parseInt(process.env.DELAY || "9");
-const SEQUENCER_COMMIT_DELAY = parseInt(process.env.SEQUENCER_COMMIT_DELAY || "10");
+const SEQUENCER_COMMIT_DELAY = parseInt(
+  process.env.SEQUENCER_COMMIT_DELAY || "10"
+);
 const SEQUENCER_PRECOMMIT_DELAY = 10; // Adjust this value as needed
 
 const DRAND_TIMEOUT = parseInt(process.env.DRAND_TIMEOUT || "10");
@@ -63,8 +68,10 @@ const MAX_TRANSACTION_TIME = 60000; // 60 seconds
 const GAS_PRICE_BUMP_PERCENTAGE = 10; // 10% increase
 
 const drandOracleAddress = process.env.DRAND_ORACLE_ADDRESS as `0x${string}`;
-const sequencerRandomOracleAddress = process.env.SEQUENCER_RANDOM_ORACLE_ADDRESS as `0x${string}`;
-const randomnessOracleAddress = process.env.RANDOMNESS_ORACLE_ADDRESS as `0x${string}`;
+const sequencerRandomOracleAddress = process.env
+  .SEQUENCER_RANDOM_ORACLE_ADDRESS as `0x${string}`;
+const randomnessOracleAddress = process.env
+  .RANDOMNESS_ORACLE_ADDRESS as `0x${string}`;
 
 const drandOracleAbi = DrandOracleABIJson.abi;
 const sequencerRandomOracleAbi = SequencerRandomOracleABIJson.abi;
@@ -94,10 +101,7 @@ interface QueuedTransaction {
 }
 
 // Client setup
-const account = privateKeyToAccount(
-  "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-);
-
+const account = privateKeyToAccount(process.env.PRIVATE_KEY as `0x${string}`);
 
 const publicClient = createPublicClient({
   chain: anvil,
@@ -248,51 +252,20 @@ const submitTransaction = async (
   } catch (error) {
     if (nonceManager.shouldResetNonce(error)) {
       await nonceManager.resetNonce();
-      logger.error(`Nonce reset due to error.`); 
+      logger.error(`Nonce reset due to error.`);
       // Retry the transaction
       await submitTransaction(type, timestamp, contractCall, additionalData);
     } else {
-
-
-
       if (error instanceof BaseError) {
-        /*
-        const revertError = error.walk(
-          (err) => err instanceof ContractFunctionRevertedError
-        );
-*/
         if (error instanceof ContractFunctionRevertedError) {
           const errorName = error.data?.errorName ?? "";
           logger.error(
             `Contract revert error: ${errorName}, args: ${error.data?.args}`
           );
         } else if (error instanceof TransactionExecutionError) {
-          
-          logger.error(
-            `Transaction execution error: ${error.shortMessage}`
-
-            //`Transaction execution error: ${error.data?.args}`
-          );
+          logger.error(`Transaction execution error: ${error.shortMessage}`);
         }
       }
-      /*
-      if (error instanceof BaseError) {
-        const revertError = error.walk(
-          (err) => err instanceof ContractFunctionRevertedError
-        );
-        if (revertError instanceof ContractFunctionRevertedError) {
-          const errorName = revertError.data?.errorName ?? "";
-          logger.error(
-            `Contract revert error: ${errorName}, args: ${revertError.data?.args}`
-          );
-        }
-      }
-
-      logger.error(`Error submitting ${type} transaction: ${error}`);
-
-
-
-      */
     }
   }
 };
@@ -442,8 +415,6 @@ const postCommitment = async (
   timestamp: number,
   commitment: string
 ): Promise<void> => {
-
-
   await submitTransaction(
     "commitment",
     timestamp,
@@ -460,17 +431,13 @@ const postCommitment = async (
     { commitment }
   );
 
-
   logger.info(`Posted commitment for ${timestamp}: ${commitment}`);
-
-
 };
-
 
 const backfillSequencerValues = async (currentTimestamp: number) => {
   for (
     let t = currentTimestamp + SEQUENCER_PRECOMMIT_DELAY;
-    t <= currentTimestamp + (2 * SEQUENCER_PRECOMMIT_DELAY) ;
+    t <= currentTimestamp + 2 * SEQUENCER_PRECOMMIT_DELAY;
     t += 2
   ) {
     if (!sequencerRandomnessCache.has(t)) {
@@ -486,7 +453,6 @@ const backfillSequencerValues = async (currentTimestamp: number) => {
           retries: 0,
         });
         sequencerRandomnessCache.set(t, randomValue);
-
       } catch (error) {
         if (
           error instanceof TransactionExecutionError &&
@@ -505,10 +471,6 @@ const backfillSequencerValues = async (currentTimestamp: number) => {
 
 const getRandomness = async (timestamp: number): Promise<void> => {
   try {
-
-    
-
-
     const isSequencerRandomAvailable = await publicClient.readContract({
       address: sequencerRandomOracleAddress,
       abi: sequencerRandomOracleAbi,
@@ -517,22 +479,21 @@ const getRandomness = async (timestamp: number): Promise<void> => {
     });
 
     logger.info(
-      chalk.magenta(`isSequencerRandomAvailable ${timestamp}: ${isSequencerRandomAvailable}`)
+      chalk.magenta(
+        `isSequencerRandomAvailable ${timestamp}: ${isSequencerRandomAvailable}`
+      )
     );
-
 
     const isDrandAvailable = await publicClient.readContract({
       address: drandOracleAddress,
       abi: drandOracleAbi,
       functionName: "isDrandAvailable",
-      args: [BigInt(timestamp-10)],
+      args: [BigInt(timestamp - 10)],
     });
 
     logger.info(
       chalk.magenta(`isDrandAvailable ${timestamp}-10: ${isDrandAvailable}`)
     );
-
-
 
     const randomness = await publicClient.readContract({
       address: randomnessOracleAddress,
@@ -575,7 +536,6 @@ const getRandomness = async (timestamp: number): Promise<void> => {
 };
 
 const backfillMissingValues = async (): Promise<void> => {
-
   try {
     const currentBlock = await publicClient.getBlock({ blockTag: "latest" });
 
@@ -583,13 +543,10 @@ const backfillMissingValues = async (): Promise<void> => {
 
     for (
       let t = currentTimestamp;
-      t <= currentTimestamp+DRAND_TIMEOUT;
+      t <= currentTimestamp + DRAND_TIMEOUT;
       t += BLOCK_TIME
     ) {
-
       if (processedDrandTimestamps.has(t)) {
-
-
         return;
       } else {
         //const drandAvailable = await isDrandAvailable(t);
@@ -628,11 +585,9 @@ const processSequencerReveals = async (currentTimestamp: number) => {
     `Processing sequencer reveals from ${startTimestamp} to ${currentTimestamp - SEQUENCER_TIMEOUT}`
   );
 
-
   const timestampsToReveal = Array.from(sequencerRandomnessCache.keys()).filter(
     (t) => t >= startTimestamp && t <= currentTimestamp - SEQUENCER_TIMEOUT
   );
-//.sort((a, b) => b - a);   // Sort timestamps in descending order to prioritize recent reveals
 
   for (const timestamp of timestampsToReveal) {
     await revealSequencerRandomness(timestamp);
@@ -673,9 +628,7 @@ const revealSequencerRandomness = async (timestamp: number): Promise<void> => {
       logger.warn(
         `No commitment found for timestamp ${timestamp}, attempting to repost commitment.`
       );
-       sequencerRandomnessCache.delete(timestamp);
-
-
+      sequencerRandomnessCache.delete(timestamp);
 
       addToTransactionQueue({
         type: "commitment",
@@ -687,15 +640,6 @@ const revealSequencerRandomness = async (timestamp: number): Promise<void> => {
 
       return;
     }
-
-/*
-    addToTransactionQueue({
-      type: "reveal",
-      timestamp: timestamp,
-      value: randomValue as `0x${string}`,
-      retries: 0,
-    });
-*/
 
     await submitTransaction(
       "reveal",
@@ -758,26 +702,10 @@ const runService = async (): Promise<void> => {
   setInterval(async () => {
     try {
       await backfillMissingValues();
- 
+
       const block = await publicClient.getBlock({ blockTag: "latest" });
-    /* 
-      const timestamp = Number(block.timestamp);
 
-
-      const drandRound = calculateDrandRound(timestamp - DRAND_DELAY);
-      const drandValue = await fetchDrandValue(drandRound);
-
-      if (drandValue) {
-        addToTransactionQueue({
-          type: "drand",
-          timestamp: timestamp - DRAND_DELAY,
-          value: drandValue,
-          retries: 0,
-        });
-      }
-*/
       await backfillSequencerValues(Number(block.timestamp));
-
       await processPendingTransactions();
     } catch (e) {
       console.log("ERROR", e);
