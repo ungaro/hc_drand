@@ -38,9 +38,9 @@ const logger = winston.createLogger({
   ],
 });
 
-import DrandOracleABIJson from "../../../contracts/DrandOracle/out/DrandOracle.sol/DrandOracle.json" with { type: "json" }; // This import style requires "esModuleInterop", see "side notes"
-import SequencerRandomOracleABIJson from "../../../contracts/DrandOracle/out/SequencerRandomOracle.sol/SequencerRandomOracle.json" with { type: "json" }; // This import style requires "esModuleInterop", see "side notes"
-import randomnessOracleABIJson from "../../../contracts/DrandOracle/out/RandomnessOracle.sol/RandomnessOracle.json" with { type: "json" }; // This import style requires "esModuleInterop", see "side notes"
+import DrandOracleABIJson from "../../../contracts/drandOracle/out/DrandOracle.sol/DrandOracle.json" with { type: "json" }; // This import style requires "esModuleInterop", see "side notes"
+import SequencerRandomOracleABIJson from "../../../contracts/drandOracle/out/SequencerRandomOracle.sol/SequencerRandomOracle.json" with { type: "json" }; // This import style requires "esModuleInterop", see "side notes"
+import randomnessOracleABIJson from "../../../contracts/drandOracle/out/RandomnessOracle.sol/RandomnessOracle.json" with { type: "json" }; // This import style requires "esModuleInterop", see "side notes"
 
 // Constants
 const DRAND_URL = process.env.DRAND_URL || "https://api.drand.sh";
