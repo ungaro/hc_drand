@@ -702,10 +702,9 @@ const runService = async (): Promise<void> => {
       await backfillSequencerValues(Number(block.timestamp));
       await processPendingTransactions();
     } catch (e) {
-      console.log("ERROR", e);
 
       const error = e as GetBlockNumberErrorType;
-      console.log("ERROR", error);
+      logger.error("Error:", error);
       return;
     }
   }, 1000);
