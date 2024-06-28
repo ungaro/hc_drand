@@ -531,7 +531,6 @@ const getRandomness = async (timestamp: number): Promise<void> => {
       }
     }
 
-    // logger.error(`Error getting randomness value for ${timestamp}: ${error}`);
   }
 };
 
@@ -549,10 +548,7 @@ const backfillMissingValues = async (): Promise<void> => {
       if (processedDrandTimestamps.has(t)) {
         return;
       } else {
-        //const drandAvailable = await isDrandAvailable(t);
 
-        //TODO: CHECK IF DRAND IS AVAILABLE FOR AVOIDING POSTING
-        //if (!drandAvailable) {
         const round = calculateDrandRound(t);
         const drandValue = await fetchDrandValue(round);
         if (drandValue) {
@@ -562,9 +558,7 @@ const backfillMissingValues = async (): Promise<void> => {
             value: drandValue,
             retries: 0,
           });
-          //processedDrandTimestamps.add(t);
         }
-        // }
       }
     }
   } catch (e) {

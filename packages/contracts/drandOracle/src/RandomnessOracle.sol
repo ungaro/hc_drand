@@ -1,14 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-
 import "./DrandOracle.sol";
 import "./SequencerRandomOracle.sol";
 
 contract RandomnessOracle {
-    constructor() Ownable(msg.sender) {}
-
     uint256 public constant DELAY = 10;
 
     DrandOracle public drandOracle;

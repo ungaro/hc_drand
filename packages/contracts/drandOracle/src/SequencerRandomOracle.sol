@@ -2,7 +2,7 @@
 pragma solidity ^0.8.19;
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
-contract SequencerRandomOracle {
+contract SequencerRandomOracle is Ownable {
     constructor() Ownable(msg.sender) {}
 
     uint256 public constant SEQUENCER_TIMEOUT = 10;
@@ -42,7 +42,7 @@ contract SequencerRandomOracle {
         return value;
     }
 
-    function postCommitment(uint256 T, bytes32 commitment) public onlyOwner{
+    function postCommitment(uint256 T, bytes32 commitment) public onlyOwner {
         require(
             block.timestamp + PRECOMMIT_DELAY <= T,
             "Commitment must be posted in advance"
